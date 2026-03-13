@@ -1,0 +1,14 @@
+[
+  {
+    "question": "IEC 62304에서 소프트웨어 안전 등급 Class A의 정의는 무엇인가요?",
+    "ground_truth": "Class A는 부상이나 손상을 유발할 수 없는 소프트웨어로, 가장 낮은 위험 등급입니다."
+  },
+  {
+    "question": "DICOM에서 SOP Instance란 무엇인가요?",
+    "ground_truth": "SOP Instance는 하나의 Image 또는 SR 등 DICOM 객체 단위로, 고유한 SOP Instance UID로 식별됩니다."
+  },
+  {
+    "question": "의료기기 소프트웨어에서 Verification과 Validation의 차이는?",
+    "ground_truth": "Verification은 소프트웨어가 명세를 올바르게 구현했는지 확인하고, Validation은 최종 사용 목적에 적합한지 확인하는 과정입니다."
+  }
+]
