@@ -1,0 +1,28 @@
+# 환경 변수
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# 데이터 (원본 문서 및 벡터 DB는 git에서 제외)
+data/raw/
+data/vectorstore/
+
+# 테스트 커버리지
+.coverage
+htmlcov/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+desktop.ini
