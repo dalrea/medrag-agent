@@ -7,23 +7,26 @@ from medrag.generation.generator import GenerationResult, LLMGenerator
 from medrag.ingestion.embedder import Embedder
 from medrag.ingestion.loader import DocumentLoader
 from medrag.ingestion.splitter import TextSplitter
-from medrag.retrieval.retriever import DenseRetriever, RetrievedChunk
+from medrag.retrieval.hybrid import HybridRetriever
+from medrag.retrieval.reranker import Reranker
+from medrag.retrieval.retriever import RetrievedChunk
 
 
 class MedRAGAgent:
     """
     MedRAG Agent 메인 클래스.
 
-    - ingest(): 문서를 로드 → 청킹 → 임베딩 → ChromaDB 저장
-    - query(): 질문을 받아 관련 문서 검색 → LLM으로 답변 생성
-    - chat(): 대화 히스토리를 유지하는 멀티턴 인터페이스
+    Phase 2 파이프라인:
+      ingest:  DocumentLoader → TextSplitter → Embedder(ChromaDB) + BM25Index
+      query:   HybridRetriever(Dense + BM25 → RRF) → Reranker → LLMGenerator
     """
 
     def __init__(self):
         self._loader = DocumentLoader()
         self._splitter = TextSplitter()
         self._embedder = Embedder()
-        self._retriever = DenseRetriever(embedder=self._embedder)
+        self._retriever = HybridRetriever(embedder=self._embedder)
+        self._reranker = Reranker()
         self._generator = LLMGenerator()
         self._chat_history: list[dict] = []
 
@@ -33,6 +36,7 @@ class MedRAGAgent:
         """
         단일 파일 또는 디렉토리를 ingestion.
 
+        - 문서 로드 → 청킹 → ChromaDB(Dense) + BM25 인덱스에 동시 저장
         Returns:
             {"documents": int, "chunks": int, "added": int}
         """
@@ -43,7 +47,15 @@ class MedRAGAgent:
             docs = self._loader.load(path)
 
         chunks = self._splitter.split(docs)
+
+        # ChromaDB 저장
         added = self._embedder.add_chunks(chunks)
+
+        # BM25 인덱스 동기화 (새로 추가된 청크만)
+        texts = [c.content for c in chunks]
+        ids = [c.metadata.get("chunk_id", str(i)) for i, c in enumerate(chunks)]
+        metadatas = [c.metadata for c in chunks]
+        self._retriever.bm25.add(texts, ids, metadatas)
 
         return {
             "documents": len(docs),
@@ -57,18 +69,20 @@ class MedRAGAgent:
         self,
         question: str,
         top_k: int | None = None,
+        rerank: bool = True,
     ) -> GenerationResult:
         """단일 질의응답 (히스토리 없음)"""
-        chunks = self._retriever.retrieve(question, top_k=top_k)
+        chunks = self._retrieve_and_rerank(question, top_k=top_k, rerank=rerank)
         return self._generator.generate(question, chunks)
 
     def retrieve_only(
         self,
         question: str,
         top_k: int | None = None,
+        rerank: bool = True,
     ) -> list[RetrievedChunk]:
         """LLM 생성 없이 검색 결과만 반환 (디버깅/평가용)"""
-        return self._retriever.retrieve(question, top_k=top_k)
+        return self._retrieve_and_rerank(question, top_k=top_k, rerank=rerank)
 
     # ── Chat (멀티턴) ──────────────────────────────────────────────────────
 
@@ -77,7 +91,7 @@ class MedRAGAgent:
         대화 히스토리를 유지하는 멀티턴 질의응답.
         Phase 3에서 QueryRewriter와 통합 예정.
         """
-        chunks = self._retriever.retrieve(message)
+        chunks = self._retrieve_and_rerank(message)
         result = self._generator.generate(message, chunks, self._chat_history)
 
         # 히스토리 업데이트
@@ -94,11 +108,26 @@ class MedRAGAgent:
         """대화 히스토리 초기화"""
         self._chat_history = []
 
+    # ── 내부 유틸 ─────────────────────────────────────────────────────────
+
+    def _retrieve_and_rerank(
+        self,
+        query: str,
+        top_k: int | None = None,
+        rerank: bool = True,
+    ) -> list[RetrievedChunk]:
+        """Hybrid Retrieval → (선택) Reranking"""
+        candidates = self._retriever.retrieve(query, top_k=top_k)
+        if rerank and candidates:
+            return self._reranker.rerank(query, candidates)
+        return candidates
+
     # ── Status ────────────────────────────────────────────────────────────
 
     def status(self) -> dict:
         return {
-            "indexed_chunks": self._embedder.count(),
+            "indexed_chunks (ChromaDB)": self._embedder.count(),
+            "indexed_chunks (BM25)": self._retriever.bm25.count(),
             "collection": settings.chroma_collection_name,
             "embedding_model": settings.embedding_model,
             "llm_model": settings.llm_model,
