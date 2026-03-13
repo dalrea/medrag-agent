@@ -4,6 +4,7 @@ from pathlib import Path
 
 from medrag.config import settings
 from medrag.generation.generator import GenerationResult, LLMGenerator
+from medrag.generation.rewriter import QueryRewriter
 from medrag.ingestion.embedder import Embedder
 from medrag.ingestion.loader import DocumentLoader
 from medrag.ingestion.splitter import TextSplitter
@@ -16,9 +17,10 @@ class MedRAGAgent:
     """
     MedRAG Agent 메인 클래스.
 
-    Phase 2 파이프라인:
+    Phase 3 파이프라인:
       ingest:  DocumentLoader → TextSplitter → Embedder(ChromaDB) + BM25Index
       query:   HybridRetriever(Dense + BM25 → RRF) → Reranker → LLMGenerator
+      chat:    QueryRewriter(히스토리 반영) → Retriever → Reranker → LLMGenerator
     """
 
     def __init__(self):
@@ -27,6 +29,7 @@ class MedRAGAgent:
         self._embedder = Embedder()
         self._retriever = HybridRetriever(embedder=self._embedder)
         self._reranker = Reranker()
+        self._rewriter = QueryRewriter()
         self._generator = LLMGenerator()
         self._chat_history: list[dict] = []
 
@@ -89,10 +92,16 @@ class MedRAGAgent:
     def chat(self, message: str) -> GenerationResult:
         """
         대화 히스토리를 유지하는 멀티턴 질의응답.
-        Phase 3에서 QueryRewriter와 통합 예정.
+
+        QueryRewriter가 이전 대화 맥락을 반영한 독립적 검색 쿼리를 생성하고,
+        원본 질문은 LLM 답변 생성에 그대로 전달한다.
         """
-        chunks = self._retrieve_and_rerank(message)
+        # 히스토리가 있으면 쿼리 재구성 (검색 정확도 향상)
+        search_query = self._rewriter.rewrite(message, self._chat_history)
+        chunks = self._retrieve_and_rerank(search_query)
         result = self._generator.generate(message, chunks, self._chat_history)
+
+        result.rewritten_query = search_query if search_query != message else None
 
         # 히스토리 업데이트
         self._chat_history.append({"role": "user", "content": message})

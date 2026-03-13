@@ -25,6 +25,7 @@ class GenerationResult:
     answer: str
     sources: list[dict] = field(default_factory=list)
     confidence: str = "unknown"  # high | medium | low | unknown
+    rewritten_query: str | None = None  # QueryRewriter가 재구성한 검색 쿼리 (멀티턴용)
 
 
 class LLMGenerator:
